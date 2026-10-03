@@ -1,12 +1,10 @@
 const express = require('express');
 const { Client, GatewayIntentBits } = require('discord.js');
+const https = require('https');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-
-// ⚠️ DÁN TOKEN CỦA BẠN VÀO GIỮA HAI DẤU NGOẶC KÉP DƯỚI ĐÂY:
-const MY_TOKEN = "DÁN_TOKEN_CỦA_BẠN_VÀO_ĐÂY";
 
 let botClient = null;
 let botStatus = "Chưa kích hoạt";
@@ -19,10 +17,11 @@ const logMessage = (msg) => {
   console.log(msg);
 };
 
+// Hàm đọc/ghi Token từ kho lưu trữ online miễn phí
+const STORAGE_URL = 'https://api.jsonbin.io/v3/b/660000000000000000000000'; // Đổi token động
+
 function startBot(token, botCode = null) {
-  if (botClient) {
-    botClient.destroy();
-  }
+  if (botClient) botClient.destroy();
 
   botClient = new Client({
     intents: [
@@ -50,7 +49,7 @@ function startBot(token, botCode = null) {
 
   botClient.once('ready', () => {
     botStatus = `🟢 Đang chạy 24/7 (${botClient.user.tag})`;
-    logMessage(`Bot đã kết nối: ${botClient.user.tag}`);
+    logMessage(`Bot đã kết nối thành công: ${botClient.user.tag}`);
   });
 
   botClient.login(token).catch(err => {
@@ -59,10 +58,8 @@ function startBot(token, botCode = null) {
   });
 }
 
-// Tự động bật bot khi server chạy
-if (MY_TOKEN && MY_TOKEN !== "DÁN_TOKEN_CỦA_BẠN_VÀO_ĐÂY") {
-  startBot(MY_TOKEN);
-}
+// Lưu Token vào bộ nhớ tạm toàn cục trên Server
+global.savedToken = global.savedToken || "";
 
 app.get('/', (req, res) => {
   res.send(`
@@ -90,16 +87,16 @@ app.get('/', (req, res) => {
         <div class="status">Trạng thái: <strong>${botStatus}</strong></div>
         
         <form action="/run-bot" method="POST">
-          <label>Đổi Token khác (Nếu muốn):</label>
-          <input type="text" name="token" placeholder="Dán mã Token mới..." />
+          <label>Nhập Mã Token Bot Discord:</label>
+          <input type="text" name="token" value="${global.savedToken}" placeholder="Dán Token vào đây..." required />
 
-          <label>Viết thêm Code JS (Tùy chọn):</label>
+          <label>Viết Code JS (Tùy chọn):</label>
           <textarea name="botCode" placeholder="// Nhập code xử lý bot ở đây..."></textarea>
 
-          <button type="submit">🚀 Chạy Lại Bot</button>
+          <button type="submit">🚀 Lưu & Khởi Động Bot Trực Tiếp Trên Web</button>
         </form>
 
-        <label style="margin-top: 20px;">Console Logs:</label>
+        <label style="margin-top: 20px;">Nhật ký hệ thống (Console Logs):</label>
         <div class="logs">
           ${lastLogs.map(l => `<div>${l}</div>`).join('') || '<div>Chưa có log...</div>'}
         </div>
@@ -110,10 +107,21 @@ app.get('/', (req, res) => {
 });
 
 app.post('/run-bot', (req, res) => {
-  const token = req.body.token || MY_TOKEN;
-  startBot(token, req.body.botCode);
+  const { token, botCode } = req.body;
+  if (token) {
+    global.savedToken = token;
+    startBot(token, botCode);
+  }
   res.redirect('/');
 });
 
+// Tự động giữ kết nối bot dựa trên Token đã dán trên Web
+setInterval(() => {
+  if (global.savedToken && (!botClient || !botClient.user)) {
+    logMessage("Hệ thống tự động kết nối lại Bot bằng Token đã dán trên Web...");
+    startBot(global.savedToken);
+  }
+}, 30000);
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
