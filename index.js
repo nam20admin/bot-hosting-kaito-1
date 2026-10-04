@@ -35,7 +35,6 @@ const logMessage = (msg) => {
 
 // Hàm khởi chạy tiến trình Bot độc lập
 function launchBotProcess(botId, filePath, language, displayName) {
-  // Dừng bot trùng ID nếu có
   const existingIndex = activeBots.findIndex(b => b.id === botId);
   if (existingIndex !== -1) {
     if (activeBots[existingIndex].process) activeBots[existingIndex].process.kill();
@@ -155,28 +154,22 @@ app.get('/', (req, res) => {
   `);
 });
 
-// Route xử lý tổng hợp các hình thức khởi chạy
 app.post('/launch', upload.single('botFile'), (req, res) => {
   const { language, token, customCode } = req.body;
   const botId = Date.now().toString();
   let filePath = '';
   let displayName = '';
 
-  // Trường hợp 1: Người dùng Upload File
   if (req.file) {
     filePath = req.file.path;
     displayName = req.file.originalname;
-  } 
-  // Trường hợp 2: Người dùng Nhập Code Trực Tiếp
-  else if (customCode && customCode.trim() !== '') {
+  } else if (customCode && customCode.trim() !== '') {
     const ext = language === 'python' ? '.py' : '.js';
-    fileName = `code_${botId}${ext}`;
+    const fileName = `code_${botId}${ext}`;
     filePath = path.join(UPLOAD_DIR, fileName);
     fs.writeFileSync(filePath, customCode);
     displayName = `Code_Custom_${botId}${ext}`;
-  } 
-  // Trường hợp 3: Người dùng Nhập Token
-  else if (token && token.trim() !== '') {
+  } else if (token && token.trim() !== '') {
     const cleanToken = token.trim();
     if (language === 'python') {
       const pyCode = `import discord\nintents = discord.Intents.default()\nintents.message_content = True\nclient = discord.Client(intents=intents)\n@client.event\nasync def on_ready():\n    print(f'Bot Python đã Online: {client.user}')\nclient.run('${cleanToken}')`;
@@ -196,7 +189,6 @@ app.post('/launch', upload.single('botFile'), (req, res) => {
   res.redirect('/');
 });
 
-// Route dừng tất cả các bot
 app.post('/stop-all', (req, res) => {
   activeBots.forEach(b => {
     if (b.process) b.process.kill();
