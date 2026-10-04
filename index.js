@@ -8,7 +8,6 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Thư mục lưu trữ file code tải lên
 const UPLOAD_DIR = path.join(__dirname, 'user_bots');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
 
@@ -24,11 +23,9 @@ const logMessage = (msg) => {
   console.log(msg);
 };
 
-// Hàm khởi chạy Bot từ File Code
 function runBotFromFile(botId, fileName, language, originalName) {
   const filePath = path.join(UPLOAD_DIR, fileName);
 
-  // Nếu bot đang chạy thì dừng trước
   const existingIndex = activeBots.findIndex(b => b.id === botId);
   if (existingIndex !== -1) {
     if (activeBots[existingIndex].process) activeBots[existingIndex].process.kill();
@@ -53,7 +50,6 @@ function runBotFromFile(botId, fileName, language, originalName) {
     process: botProcess
   };
 
-  // Ghép log từ tiến trình bot ra console web
   botProcess.stdout.on('data', (data) => {
     logMessage(`[${originalName}]: ${data.toString().trim()}`);
   });
@@ -138,7 +134,6 @@ app.get('/', (req, res) => {
   `);
 });
 
-// Route xử lý upload file
 app.post('/upload-bot', upload.single('botFile'), (req, res) => {
   if (!req.file) return res.redirect('/');
   
@@ -151,7 +146,6 @@ app.post('/upload-bot', upload.single('botFile'), (req, res) => {
   res.redirect('/');
 });
 
-// Route tắt tất cả bot
 app.post('/stop-all', (req, res) => {
   activeBots.forEach(b => {
     if (b.process) b.process.kill();
