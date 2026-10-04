@@ -28,36 +28,13 @@ const logMessage = (msg) => {
   console.log(msg);
 };
 
-// Auto Resolver: Cài đặt thư viện tự động
-function autoInstallModules(filePath, language) {
-  try {
-    if (!fs.existsSync(filePath)) return;
-    const content = fs.readFileSync(filePath, 'utf8');
-
-    if (language === 'python') {
-      const pkgs = [];
-      if (content.includes('discord')) pkgs.push('discord.py');
-      if (content.includes('requests')) pkgs.push('requests');
-      if (content.includes('aiohttp')) pkgs.push('aiohttp');
-      if (content.includes('dotenv')) pkgs.push('python-dotenv');
-
-      if (pkgs.length > 0) {
-        logMessage(`📦 [Auto-Resolver] Đang tự động quét & cài đặt thư viện Python: ${pkgs.join(', ')}...`);
-        execSync(`pip3 install ${pkgs.join(' ')} --break-system-packages || pip install ${pkgs.join(' ')}`);
-        logMessage(`✅ [Auto-Resolver] Thư viện Python đã sẵn sàng!`);
-      }
-    } else if (language === 'nodejs') {
-      if (content.includes("require('discord.js')") || content.includes('import { Client }')) {
-        try { require.resolve('discord.js'); } catch (e) {
-          logMessage(`📦 [Auto-Resolver] Đang cài đặt thư viện Node.js: discord.js...`);
-          execSync('npm install discord.js');
-          logMessage(`✅ [Auto-Resolver] discord.js đã được cài đặt!`);
-        }
-      }
-    }
-  } catch (err) {
-    logMessage(`⚠️ Cảnh báo khởi tạo môi trường: ${err.message}`);
-  }
+// Cài đặt thư viện bắt buộc ngay khi server chạy
+try {
+  console.log("⚡ [Hệ Thống] Đang kiểm tra và cài đặt sẵn môi trường Python/Node.js...");
+  execSync('pip3 install discord.py requests aiohttp python-dotenv --break-system-packages || pip install discord.py requests aiohttp python-dotenv');
+  console.log("✅ [Hệ Thống] Môi trường Python đã sẵn sàng!");
+} catch (e) {
+  console.log("⚠️ Cảnh báo cài đặt môi trường:", e.message);
 }
 
 // Khởi chạy tiến trình Bot
@@ -67,14 +44,13 @@ function startBotProcess(fileName, language) {
     return logMessage(`❌ Lỗi: Không tìm thấy tệp ${fileName} để khởi chạy!`);
   }
 
-  autoInstallModules(filePath, language);
-
   if (activeBots[fileName] && activeBots[fileName].process) {
     try { activeBots[fileName].process.kill(); } catch (e) {}
   }
 
   let botProcess = null;
   if (language === 'python') {
+    // -u để Python stream log realtime không bị đọng bộ nhớ đệm
     botProcess = spawn('python3', ['-u', filePath]);
   } else {
     botProcess = spawn('node', [filePath]);
@@ -89,12 +65,12 @@ function startBotProcess(fileName, language) {
     startTime: new Date().toLocaleTimeString()
   };
 
-  logMessage(`🚀 [${fileName}] Tiến trình Bot đã kích hoạt ONLINE 24/7 thành công.`);
+  logMessage(`🚀 [${fileName}] Tiến trình Bot đã khởi chạy ONLINE 24/7.`);
 
   botProcess.stdout.on('data', (data) => logMessage(`[${fileName} - LOG]: ${data.toString().trim()}`));
-  botProcess.stderr.on('data', (data) => logMessage(`[${fileName} - ERROR]: ${data.toString().trim()}`));
+  botProcess.stderr.on('data', (data) => logMessage(`[${fileName} - LỖI]: ${data.toString().trim()}`));
   botProcess.on('close', (code) => {
-    logMessage(`⚠️ [${fileName}] Tiến trình dừng (Exit Code: ${code})`);
+    logMessage(`⚠️ [${fileName}] Tiến trình đã dừng (Exit Code: ${code})`);
     if (activeBots[fileName]) activeBots[fileName].status = 'OFFLINE';
   });
 }
@@ -117,14 +93,14 @@ app.post('/api/delete-file', (req, res) => {
   const filePath = path.join(UPLOAD_DIR, req.body.fileName);
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
-    logMessage(`🗑️ Đã xóa file: ${req.body.fileName}`);
+    logMessage(`🗑️️ Đã xóa file: ${req.body.fileName}`);
     res.json({ success: true });
   } else {
     res.json({ success: false });
   }
 });
 
-// Giao diện UI Enterprise
+// Giao diện Web Hosting Pro 100%
 app.get('/', (req, res) => {
   const botList = Object.values(activeBots);
   const files = fs.readdirSync(UPLOAD_DIR);
@@ -147,7 +123,6 @@ app.get('/', (req, res) => {
           --bg-card: #1e293b;
           --border: #334155;
           --primary: #38bdf8;
-          --primary-hover: #0284c7;
           --success: #22c55e;
           --danger: #ef4444;
           --text-main: #f8fafc;
@@ -156,7 +131,6 @@ app.get('/', (req, res) => {
         * { box-sizing: border-box; }
         body { margin: 0; font-family: 'Plus Jakarta Sans', sans-serif; background: var(--bg-dark); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
 
-        /* Sidebar Navigation & File Manager */
         .sidebar { width: 300px; background: var(--bg-sidebar); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 15px; }
         .logo { font-size: 20px; font-weight: 800; color: var(--primary); display: flex; align-items: center; gap: 10px; }
         .logo i { background: rgba(56, 189, 248, 0.15); padding: 10px; border-radius: 10px; }
@@ -167,16 +141,13 @@ app.get('/', (req, res) => {
         .file-item i.del-btn { color: #64748b; transition: 0.2s; }
         .file-item i.del-btn:hover { color: var(--danger); }
 
-        /* Main Workspace */
         .main { flex: 1; padding: 25px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
         .header { display: flex; justify-content: space-between; align-items: center; }
 
-        /* Metrics Bar */
         .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
         .metric-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; align-items: center; gap: 15px; }
         .metric-icon { width: 45px; height: 45px; border-radius: 10px; background: rgba(56, 189, 248, 0.15); color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 20px; }
 
-        /* Code IDE Editor */
         .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
         textarea { width: 100%; height: 320px; background: #020617; border: 1px solid var(--border); border-radius: 10px; color: #38bdf8; font-family: 'JetBrains Mono', monospace; padding: 15px; font-size: 13px; line-height: 1.6; resize: vertical; outline: none; }
         textarea:focus { border-color: var(--primary); }
@@ -188,7 +159,6 @@ app.get('/', (req, res) => {
         .btn-danger { background: var(--danger); }
         .btn-danger:hover { opacity: 0.9; }
 
-        /* Terminal Console */
         .terminal { background: #020617; border: 1px solid var(--border); border-radius: 10px; padding: 15px; height: 180px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #a3e635; }
       </style>
     </head>
@@ -226,7 +196,6 @@ app.get('/', (req, res) => {
           </form>
         </div>
 
-        <!-- Metric Cards -->
         <div class="metrics-grid">
           <div class="metric-card">
             <div class="metric-icon"><i class="fa-solid fa-microchip"></i></div>
@@ -251,7 +220,6 @@ app.get('/', (req, res) => {
           </div>
         </div>
 
-        <!-- Trình Soạn Thảo IDE -->
         <div class="card">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
             <h3 style="margin:0;"><i class="fa-solid fa-code"></i> Trình Soạn Thảo Code IDE</h3>
@@ -279,7 +247,6 @@ app.get('/', (req, res) => {
           </form>
         </div>
 
-        <!-- Terminal Logs -->
         <div class="card">
           <h3 style="margin-top:0; margin-bottom: 12px;"><i class="fa-solid fa-terminal"></i> Terminal Live Console Logs</h3>
           <div class="terminal">
@@ -293,7 +260,6 @@ app.get('/', (req, res) => {
 
         document.getElementById('codeEditor').value = pyDefault;
 
-        // Bắt phím tắt Ctrl + S để lưu
         document.addEventListener('keydown', (e) => {
           if ((e.ctrlKey || e.metaKey) && e.key === 's') {
             e.preventDefault();
@@ -333,7 +299,6 @@ app.get('/', (req, res) => {
   `);
 });
 
-// Routes Upload & Save
 app.post('/upload-files', upload.array('botFiles', 30), (req, res) => {
   logMessage(`📁 [System] Đã tải lên ${req.files ? req.files.length : 0} tệp dự án.`);
   res.redirect('/');
