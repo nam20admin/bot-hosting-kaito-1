@@ -1,77 +1,74 @@
 const express = require('express');
-const { Client, GatewayIntentBits } = require('discord.js');
+const multer = require('multer');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Lưu trữ danh sách các Bot đang chạy
-let activeBots = []; 
+// Thư mục lưu trữ file code tải lên
+const UPLOAD_DIR = path.join(__dirname, 'user_bots');
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
+
+const upload = multer({ dest: UPLOAD_DIR });
+
+let activeBots = [];
 let lastLogs = [];
 
 const logMessage = (msg) => {
   const time = new Date().toLocaleTimeString();
   lastLogs.push(`[${time}] ${msg}`);
-  if (lastLogs.length > 25) lastLogs.shift();
+  if (lastLogs.length > 30) lastLogs.shift();
   console.log(msg);
 };
 
-// Hàm khởi tạo và chạy 1 Bot
-function launchBot(token, botCode = null) {
-  // Kiểm tra xem Token này đã được chạy chưa
-  const existingBot = activeBots.find(b => b.token === token);
-  if (existingBot) {
-    existingBot.client.destroy();
-    activeBots = activeBots.filter(b => b.token !== token);
+// Hàm khởi chạy Bot từ File Code
+function runBotFromFile(botId, fileName, language, originalName) {
+  const filePath = path.join(UPLOAD_DIR, fileName);
+
+  // Nếu bot đang chạy thì dừng trước
+  const existingIndex = activeBots.findIndex(b => b.id === botId);
+  if (existingIndex !== -1) {
+    if (activeBots[existingIndex].process) activeBots[existingIndex].process.kill();
+    activeBots.splice(existingIndex, 1);
   }
 
-  const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent
-    ]
-  });
+  let botProcess = null;
+
+  if (language === 'python') {
+    logMessage(`🚀 Khởi chạy Bot Python: ${originalName}`);
+    botProcess = spawn('python3', [filePath]);
+  } else if (language === 'nodejs') {
+    logMessage(`🚀 Khởi chạy Bot Node.js: ${originalName}`);
+    botProcess = spawn('node', [filePath]);
+  }
 
   const botData = {
-    token: token,
-    client: client,
-    tag: "Đang kết nối...",
-    status: "🟡 Đang khởi động..."
+    id: botId,
+    name: originalName,
+    lang: language.toUpperCase(),
+    status: '🟢 Online 24/7',
+    process: botProcess
   };
 
-  if (botCode && botCode.trim() !== '') {
-    try {
-      const runCustomCode = new Function('client', botCode);
-      runCustomCode(client);
-    } catch (err) {
-      logMessage(`Lỗi Code JS: ${err.message}`);
-    }
-  } else {
-    client.on('messageCreate', (message) => {
-      if (message.author.bot) return;
-      if (message.content === '!ping') {
-        message.reply('Pong! Bot đang online 24/7!');
-      }
-    });
-  }
-
-  client.once('ready', () => {
-    botData.tag = client.user.tag;
-    botData.status = "🟢 Online 24/7";
-    logMessage(` Bot đã kết nối thành công: ${client.user.tag}`);
+  // Ghép log từ tiến trình bot ra console web
+  botProcess.stdout.on('data', (data) => {
+    logMessage(`[${originalName}]: ${data.toString().trim()}`);
   });
 
-  client.login(token).catch(err => {
-    botData.status = "🔴 Lỗi Token!";
-    logMessage(` Lỗi đăng nhập: ${err.message}`);
+  botProcess.stderr.on('data', (data) => {
+    logMessage(`[${originalName} LỖI]: ${data.toString().trim()}`);
+  });
+
+  botProcess.on('close', (code) => {
+    logMessage(`⚠️ Bot ${originalName} đã dừng (Exit code: ${code})`);
+    botData.status = '🔴 Đã tắt';
   });
 
   activeBots.push(botData);
 }
-
-// Lưu danh sách Token vào bộ nhớ máy chủ
-global.savedTokens = global.savedTokens || [];
 
 app.get('/', (req, res) => {
   res.send(`
@@ -80,61 +77,60 @@ app.get('/', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Quản Lý Khởi Chạy Nhiều Bot 24/7</title>
+      <title>Multi-Language Bot Hosting Panel</title>
       <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: white; padding: 20px; display: flex; justify-content: center; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0f172a; color: white; padding: 20px; display: flex; justify-content: center; }
         .container { width: 100%; max-width: 800px; background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
         h1 { text-align: center; color: #38bdf8; margin-top: 0; font-size: 22px; }
         .status-box { background: #0f172a; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #334155; }
         .bot-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; background: #1e293b; border-radius: 6px; margin-top: 8px; font-family: monospace; }
         label { font-weight: bold; color: #94a3b8; display: block; margin-bottom: 6px; font-size: 14px; }
-        input[type="password"], textarea { width: 100%; padding: 12px; margin-bottom: 15px; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 6px; box-sizing: border-box; }
-        textarea { height: 120px; font-family: monospace; color: #38bdf8; }
-        .btn-group { display: flex; gap: 10px; }
-        button { flex: 1; padding: 12px; background: #22c55e; border: none; color: white; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; }
+        input[type="file"], select { width: 100%; padding: 10px; margin-bottom: 15px; background: #0f172a; border: 1px solid #334155; color: white; border-radius: 6px; box-sizing: border-box; }
+        button { width: 100%; padding: 12px; background: #22c55e; border: none; color: white; font-weight: bold; border-radius: 6px; cursor: pointer; font-size: 15px; }
         button:hover { background: #16a34a; }
-        .btn-stop-all { background: #ef4444; }
-        .btn-stop-all:hover { background: #dc2626; }
-        .logs { background: #020617; padding: 12px; border-radius: 6px; height: 130px; overflow-y: auto; font-family: monospace; font-size: 12px; color: #a3e635; margin-top: 15px; border: 1px solid #334155; }
+        .btn-danger { background: #ef4444; margin-top: 10px; }
+        .btn-danger:hover { background: #dc2626; }
+        .logs { background: #020617; padding: 12px; border-radius: 6px; height: 160px; overflow-y: auto; font-family: monospace; font-size: 12px; color: #a3e635; margin-top: 15px; border: 1px solid #334155; }
       </style>
     </head>
     <body>
       <div class="container">
-        <h1>⚡ Quản Lý & Chạy Nhiều Bot Discord 24/7</h1>
+        <h1>🌐 Web Hosting Discord Bot Đa Ngôn Ngữ</h1>
         
         <div class="status-box">
-          <label>Danh sách Bot đang chạy (${activeBots.length}):</label>
+          <label>Danh Sách Bot Đang Chạy (${activeBots.length}):</label>
           ${
             activeBots.length === 0 
-            ? '<div style="color: #64748b; font-size: 13px;">Chưa có Bot nào được bật.</div>'
+            ? '<div style="color: #64748b; font-size: 13px;">Chưa có file bot nào được tải lên.</div>'
             : activeBots.map(b => `
                 <div class="bot-item">
-                  <span>🤖 <strong>${b.tag}</strong></span>
+                  <span>🤖 <strong>${b.name}</strong> [${b.lang}]</span>
                   <span>${b.status}</span>
                 </div>
               `).join('')
           }
         </div>
         
-        <form action="/add-bot" method="POST">
-          <label>Nhập Token Bot Mới (Mỗi lần nhập 1 Token):</label>
-          <input type="password" name="token" placeholder="Dán mã Token Bot Discord vào đây..." required />
+        <form action="/upload-bot" method="POST" enctype="multipart/form-data">
+          <label>1. Chọn Ngôn Ngữ Lập Trình:</label>
+          <select name="language" required>
+            <option value="nodejs">Node.js (file .js)</option>
+            <option value="python">Python (file .py)</option>
+          </select>
 
-          <label>Viết Code JS Tùy Chỉnh Cho Bot Trên (Tùy chọn):</label>
-          <textarea name="botCode" placeholder="// Code xử lý riêng cho Bot này (để trống nếu dùng lệnh !ping mặc định)"></textarea>
+          <label>2. Tải File Code Bot Lên (.js hoặc .py):</label>
+          <input type="file" name="botFile" required />
 
-          <div class="btn-group">
-            <button type="submit">🚀 Bật Thêm Bot Này</button>
-          </div>
+          <button type="submit">🚀 Upload & Kích Hoạt Bot Ngay</button>
         </form>
 
-        <form action="/stop-all" method="POST" style="margin-top: 10px;">
-          <button type="submit" class="btn-stop-all">🛑 Dừng Tất Cả Bot</button>
+        <form action="/stop-all" method="POST">
+          <button type="submit" class="btn-danger">🛑 Dừng Tất Cả Bot</button>
         </form>
 
-        <label style="margin-top: 20px;">Nhật ký hệ thống (Console Logs):</label>
+        <label style="margin-top: 20px;">Console Logs (Nhật Ký Thực Thi):</label>
         <div class="logs">
-          ${lastLogs.map(l => `<div>${l}</div>`).join('') || '<div>Chưa có log...</div>'}
+          ${lastLogs.map(l => `<div>${l}</div>`).join('') || '<div>Chưa có dữ liệu log...</div>'}
         </div>
       </div>
     </body>
@@ -142,39 +138,28 @@ app.get('/', (req, res) => {
   `);
 });
 
-// Route thêm Bot mới
-app.post('/add-bot', (req, res) => {
-  const { token, botCode } = req.body;
-  if (token) {
-    if (!global.savedTokens.includes(token)) {
-      global.savedTokens.push(token);
-    }
-    launchBot(token, botCode);
-  }
+// Route xử lý upload file
+app.post('/upload-bot', upload.single('botFile'), (req, res) => {
+  if (!req.file) return res.redirect('/');
+  
+  const botId = Date.now().toString();
+  const language = req.body.language;
+  const fileName = req.file.filename;
+  const originalName = req.file.originalname;
+
+  runBotFromFile(botId, fileName, language, originalName);
   res.redirect('/');
 });
 
-// Route tắt tất cả Bot
+// Route tắt tất cả bot
 app.post('/stop-all', (req, res) => {
-  activeBots.forEach(b => b.client.destroy());
+  activeBots.forEach(b => {
+    if (b.process) b.process.kill();
+  });
   activeBots = [];
-  global.savedTokens = [];
-  logMessage("Đã dừng tất cả các Bot.");
+  logMessage("Đã tắt toàn bộ tiến trình Bot.");
   res.redirect('/');
 });
-
-// Tự động duy trì các Bot đã thêm
-setInterval(() => {
-  if (global.savedTokens.length > 0) {
-    global.savedTokens.forEach(token => {
-      const isRunning = activeBots.some(b => b.token === token && b.client.user);
-      if (!isRunning) {
-        logMessage("Tự động kết nối lại Bot...");
-        launchBot(token);
-      }
-    });
-  }
-}, 30000);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server đang lắng nghe tại port ${PORT}`));
