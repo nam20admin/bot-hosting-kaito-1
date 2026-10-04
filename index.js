@@ -1,12 +1,21 @@
 const express = require('express');
 const multer = require('multer');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// Tự động kiểm tra & cài đặt discord.py nếu máy chủ chưa có
+try {
+  console.log("Đang kiểm tra và tự động cài đặt thư viện Python (discord.py)...");
+  execSync('pip3 install discord.py requests --break-system-packages || pip install discord.py requests');
+  console.log("Cài đặt thư viện Python thành công!");
+} catch (err) {
+  console.log("Lưu ý khi cài thư viện Python:", err.message);
+}
 
 const UPLOAD_DIR = path.join(__dirname, 'user_bots');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR);
@@ -36,6 +45,7 @@ function runBotFromFile(botId, fileName, language, originalName) {
 
   if (language === 'python') {
     logMessage(`🚀 Khởi chạy Bot Python: ${originalName}`);
+    // Chạy bằng python3 hoặc python
     botProcess = spawn('python3', [filePath]);
   } else if (language === 'nodejs') {
     logMessage(`🚀 Khởi chạy Bot Node.js: ${originalName}`);
@@ -86,7 +96,7 @@ app.get('/', (req, res) => {
         button:hover { background: #16a34a; }
         .btn-danger { background: #ef4444; margin-top: 10px; }
         .btn-danger:hover { background: #dc2626; }
-        .logs { background: #020617; padding: 12px; border-radius: 6px; height: 160px; overflow-y: auto; font-family: monospace; font-size: 12px; color: #a3e635; margin-top: 15px; border: 1px solid #334155; }
+        .logs { background: #020617; padding: 12px; border-radius: 6px; height: 180px; overflow-y: auto; font-family: monospace; font-size: 12px; color: #a3e635; margin-top: 15px; border: 1px solid #334155; }
       </style>
     </head>
     <body>
