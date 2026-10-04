@@ -3,6 +3,7 @@ const multer = require('multer');
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 const app = express();
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
@@ -11,7 +12,6 @@ app.use(express.json({ limit: '100mb' }));
 const UPLOAD_DIR = path.join(__dirname, 'user_bots');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// Cấu hình Multer lưu giữ nguyên tên file upload
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, UPLOAD_DIR),
   filename: (req, file, cb) => cb(null, file.originalname)
@@ -24,41 +24,47 @@ let systemLogs = [];
 const logMessage = (msg) => {
   const time = new Date().toLocaleTimeString();
   systemLogs.push(`[${time}] ${msg}`);
-  if (systemLogs.length > 60) systemLogs.shift();
+  if (systemLogs.length > 100) systemLogs.shift();
   console.log(msg);
 };
 
-// Hàm tự động quét và cài đặt thư viện thiếu khi khởi chạy
+// Auto Resolver: Cài đặt thư viện tự động
 function autoInstallModules(filePath, language) {
   try {
-    const code = fs.readFileSync(filePath, 'utf8');
+    if (!fs.existsSync(filePath)) return;
+    const content = fs.readFileSync(filePath, 'utf8');
+
     if (language === 'python') {
-      const modules = [];
-      if (code.includes('discord')) modules.push('discord.py');
-      if (code.includes('requests')) modules.push('requests');
-      if (code.includes('aiohttp')) modules.push('aiohttp');
-      if (modules.length > 0) {
-        logMessage(`📦 Đang tự động kiểm tra/cài thư viện Python: ${modules.join(', ')}...`);
-        execSync(`pip3 install ${modules.join(' ')} --break-system-packages || pip install ${modules.join(' ')}`);
+      const pkgs = [];
+      if (content.includes('discord')) pkgs.push('discord.py');
+      if (content.includes('requests')) pkgs.push('requests');
+      if (content.includes('aiohttp')) pkgs.push('aiohttp');
+      if (content.includes('dotenv')) pkgs.push('python-dotenv');
+
+      if (pkgs.length > 0) {
+        logMessage(`📦 [Auto-Resolver] Đang tự động quét & cài đặt thư viện Python: ${pkgs.join(', ')}...`);
+        execSync(`pip3 install ${pkgs.join(' ')} --break-system-packages || pip install ${pkgs.join(' ')}`);
+        logMessage(`✅ [Auto-Resolver] Thư viện Python đã sẵn sàng!`);
       }
-    } else {
-      if (code.includes('discord.js')) {
+    } else if (language === 'nodejs') {
+      if (content.includes("require('discord.js')") || content.includes('import { Client }')) {
         try { require.resolve('discord.js'); } catch (e) {
-          logMessage(`📦 Đang cài đặt thư viện discord.js...`);
+          logMessage(`📦 [Auto-Resolver] Đang cài đặt thư viện Node.js: discord.js...`);
           execSync('npm install discord.js');
+          logMessage(`✅ [Auto-Resolver] discord.js đã được cài đặt!`);
         }
       }
     }
-  } catch (e) {
-    logMessage(`⚠️ Cảnh báo chuẩn bị môi trường: ${e.message}`);
+  } catch (err) {
+    logMessage(`⚠️ Cảnh báo khởi tạo môi trường: ${err.message}`);
   }
 }
 
-// Hàm khởi chạy tiến trình Bot
+// Khởi chạy tiến trình Bot
 function startBotProcess(fileName, language) {
   const filePath = path.join(UPLOAD_DIR, fileName);
   if (!fs.existsSync(filePath)) {
-    return logMessage(`❌ Lỗi: Không tìm thấy file ${fileName} để khởi chạy!`);
+    return logMessage(`❌ Lỗi: Không tìm thấy tệp ${fileName} để khởi chạy!`);
   }
 
   autoInstallModules(filePath, language);
@@ -79,43 +85,51 @@ function startBotProcess(fileName, language) {
     lang: language.toUpperCase(),
     status: 'ONLINE',
     process: botProcess,
+    filePath: filePath,
     startTime: new Date().toLocaleTimeString()
   };
 
-  logMessage(`🚀 [${fileName}] Tiến trình Bot đã được kích hoạt Online!`);
+  logMessage(`🚀 [${fileName}] Tiến trình Bot đã kích hoạt ONLINE 24/7 thành công.`);
 
-  botProcess.stdout.on('data', (data) => logMessage(`[${fileName} LOG]: ${data.toString().trim()}`));
-  botProcess.stderr.on('data', (data) => logMessage(`[${fileName} LỖI]: ${data.toString().trim()}`));
+  botProcess.stdout.on('data', (data) => logMessage(`[${fileName} - LOG]: ${data.toString().trim()}`));
+  botProcess.stderr.on('data', (data) => logMessage(`[${fileName} - ERROR]: ${data.toString().trim()}`));
   botProcess.on('close', (code) => {
-    logMessage(`⚠️ [${fileName}] Tiến trình đã dừng (Exit code: ${code})`);
+    logMessage(`⚠️ [${fileName}] Tiến trình dừng (Exit Code: ${code})`);
     if (activeBots[fileName]) activeBots[fileName].status = 'OFFLINE';
   });
 }
 
-// API Lấy danh sách file trong dự án
+// APIs quản lý tệp
 app.get('/api/files', (req, res) => {
-  fs.readdir(UPLOAD_DIR, (err, files) => {
-    if (err) return res.json([]);
-    res.json(files);
-  });
+  fs.readdir(UPLOAD_DIR, (err, files) => res.json(files || []));
 });
 
-// API Đọc nội dung file để sửa trên Web
 app.get('/api/file-content', (req, res) => {
-  const fileName = req.query.name;
-  const filePath = path.join(UPLOAD_DIR, fileName);
+  const filePath = path.join(UPLOAD_DIR, req.query.name);
   if (fs.existsSync(filePath)) {
-    const content = fs.readFileSync(filePath, 'utf8');
-    res.json({ success: true, content });
+    res.json({ success: true, content: fs.readFileSync(filePath, 'utf8') });
   } else {
-    res.json({ success: false, message: 'File không tồn tại' });
+    res.json({ success: false, message: 'Tệp không tồn tại' });
   }
 });
 
-// Giao diện Web Hosting chuẩn 100%
+app.post('/api/delete-file', (req, res) => {
+  const filePath = path.join(UPLOAD_DIR, req.body.fileName);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+    logMessage(`🗑️ Đã xóa file: ${req.body.fileName}`);
+    res.json({ success: true });
+  } else {
+    res.json({ success: false });
+  }
+});
+
+// Giao diện UI Enterprise
 app.get('/', (req, res) => {
   const botList = Object.values(activeBots);
-  const existingFiles = fs.readdirSync(UPLOAD_DIR);
+  const files = fs.readdirSync(UPLOAD_DIR);
+  const freeMem = (os.freemem() / 1024 / 1024).toFixed(0);
+  const totalMem = (os.totalmem() / 1024 / 1024).toFixed(0);
 
   res.send(`
     <!DOCTYPE html>
@@ -123,130 +137,170 @@ app.get('/', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Kaito Hosting - Cloud Bot Panel 24/7</title>
+      <title>Kaito Cloud Platform - Commercial Bot Panel</title>
       <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
       <style>
-        :root { --bg-dark: #090d16; --bg-card: #111827; --border: #1f2937; --primary: #3b82f6; --success: #10b981; --danger: #ef4444; }
-        body { margin: 0; font-family: 'Inter', system-ui, sans-serif; background: var(--bg-dark); color: #f3f4f6; display: flex; height: 100vh; overflow: hidden; }
-        
-        .sidebar { width: 260px; background: #0f172a; border-right: 1px solid var(--border); padding: 15px; display: flex; flex-direction: column; gap: 15px; }
-        .logo { font-size: 18px; font-weight: 800; color: var(--primary); display: flex; align-items: center; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-        
-        /* File Manager Tree */
-        .file-manager { flex: 1; overflow-y: auto; background: #030712; border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
-        .file-item { padding: 8px 10px; border-radius: 6px; font-family: monospace; font-size: 13px; color: #9ca3af; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: 0.2s; }
-        .file-item:hover, .file-item.active { background: #1e293b; color: white; }
-        
-        .main { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
-        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
-        
-        .bot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 8px; }
-        .bot-card { background: #1f293d; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
-        .badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
-        .badge-online { background: rgba(16, 185, 129, 0.2); color: var(--success); }
-        .badge-offline { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
-        
-        textarea { width: 100%; height: 280px; background: #030712; border: 1px solid var(--border); border-radius: 8px; color: #38bdf8; font-family: 'Consolas', monospace; padding: 12px; box-sizing: border-box; font-size: 13px; resize: vertical; line-height: 1.5; }
-        input, select { background: #030712; border: 1px solid var(--border); color: white; padding: 9px; border-radius: 6px; box-sizing: border-box; width: 100%; margin-bottom: 8px; font-size: 13px; }
-        .btn { background: var(--primary); border: none; color: white; padding: 10px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 6px; }
-        .btn:hover { opacity: 0.9; }
+        :root {
+          --bg-dark: #080c14;
+          --bg-sidebar: #0f172a;
+          --bg-card: #1e293b;
+          --border: #334155;
+          --primary: #38bdf8;
+          --primary-hover: #0284c7;
+          --success: #22c55e;
+          --danger: #ef4444;
+          --text-main: #f8fafc;
+          --text-sub: #94a3b8;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: 'Plus Jakarta Sans', sans-serif; background: var(--bg-dark); color: var(--text-main); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Sidebar Navigation & File Manager */
+        .sidebar { width: 300px; background: var(--bg-sidebar); border-right: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 15px; }
+        .logo { font-size: 20px; font-weight: 800; color: var(--primary); display: flex; align-items: center; gap: 10px; }
+        .logo i { background: rgba(56, 189, 248, 0.15); padding: 10px; border-radius: 10px; }
+
+        .file-tree { flex: 1; background: #020617; border: 1px solid var(--border); border-radius: 10px; padding: 10px; overflow-y: auto; }
+        .file-item { padding: 10px 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-sub); cursor: pointer; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; margin-bottom: 4px; }
+        .file-item:hover, .file-item.active { background: #1e293b; color: #fff; }
+        .file-item i.del-btn { color: #64748b; transition: 0.2s; }
+        .file-item i.del-btn:hover { color: var(--danger); }
+
+        /* Main Workspace */
+        .main { flex: 1; padding: 25px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; }
+
+        /* Metrics Bar */
+        .metrics-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+        .metric-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; display: flex; align-items: center; gap: 15px; }
+        .metric-icon { width: 45px; height: 45px; border-radius: 10px; background: rgba(56, 189, 248, 0.15); color: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 20px; }
+
+        /* Code IDE Editor */
+        .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        textarea { width: 100%; height: 320px; background: #020617; border: 1px solid var(--border); border-radius: 10px; color: #38bdf8; font-family: 'JetBrains Mono', monospace; padding: 15px; font-size: 13px; line-height: 1.6; resize: vertical; outline: none; }
+        textarea:focus { border-color: var(--primary); }
+
+        input, select { background: #020617; border: 1px solid var(--border); color: #fff; padding: 10px 14px; border-radius: 8px; font-size: 13px; outline: none; width: 100%; }
+
+        .btn { background: #0284c7; border: none; color: white; padding: 12px 20px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; }
+        .btn:hover { background: #0369a1; }
         .btn-danger { background: var(--danger); }
-        
-        .console { background: #020617; border: 1px solid var(--border); border-radius: 8px; padding: 12px; height: 160px; overflow-y: auto; font-family: monospace; font-size: 12px; color: #a3e635; }
+        .btn-danger:hover { opacity: 0.9; }
+
+        /* Terminal Console */
+        .terminal { background: #020617; border: 1px solid var(--border); border-radius: 10px; padding: 15px; height: 180px; overflow-y: auto; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #a3e635; }
       </style>
     </head>
     <body>
 
-      <!-- SIDEBAR QUẢN LÝ TỆP CODE (FILE MANAGER) -->
       <div class="sidebar">
         <div class="logo"><i class="fa-solid fa-server"></i> KAITO HOSTING</div>
         
-        <div style="font-weight: bold; font-size: 12px; color: #9ca3af;"><i class="fa-solid fa-folder-open"></i> QUẢN LÝ TỆP DỰ ÁN</div>
-        
-        <!-- Form Upload Tệp/Project -->
+        <div style="font-size: 12px; font-weight: 700; color: var(--text-sub);"><i class="fa-solid fa-folder-tree"></i> TỆP & DỰ ÁN</div>
+
         <form action="/upload-files" method="POST" enctype="multipart/form-data">
-          <label style="font-size:11px; color:#6b7280;">📁 Tải File/Project Từ Máy Tính:</label>
-          <input type="file" name="botFiles" multiple required style="font-size:11px;" />
-          <button type="submit" class="btn" style="width:100%; font-size:12px; padding:6px;"><i class="fa-solid fa-cloud-arrow-up"></i> Upload Tệp Vào Web</button>
+          <input type="file" name="botFiles" multiple required style="font-size:11px; margin-bottom: 8px;" />
+          <button type="submit" class="btn" style="width:100%; font-size:12px; padding: 8px;"><i class="fa-solid fa-cloud-arrow-up"></i> Tải Dự Án Lên Web</button>
         </form>
 
-        <!-- Danh Sách Các File Trong Project -->
-        <div class="file-manager" id="fileTree">
-          ${existingFiles.length === 0 ? '<div style="color:#6b7280; font-size:12px;">Chưa có tệp nào.</div>' : ''}
-          ${existingFiles.map(f => `
+        <div class="file-tree" id="fileTree">
+          ${files.length === 0 ? '<div style="color:var(--text-sub); font-size:12px;">Chưa có tệp nào.</div>' : ''}
+          ${files.map(f => `
             <div class="file-item" onclick="openFile('${f}')">
-              <i class="fa-regular ${f.endsWith('.py') ? 'fa-file-code' : f.endsWith('.js') ? 'fa-file-lines' : 'fa-file'}"></i> ${f}
+              <span><i class="fa-regular ${f.endsWith('.py') ? 'fa-file-code' : 'fa-file-lines'}"></i> ${f}</span>
+              <i class="fa-solid fa-trash del-btn" onclick="deleteFile(event, '${f}')" title="Xóa file"></i>
             </div>
           `).join('')}
         </div>
       </div>
 
-      <!-- MAIN PANEL -->
       <div class="main">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-          <h2 style="margin:0;"><i class="fa-solid fa-sliders"></i> Bảng Điều Khiển Bot Hosting 24/7</h2>
+        <div class="header">
+          <div>
+            <h2 style="margin:0; font-weight: 800;">Cloud Bot Hosting Dashboard</h2>
+            <div style="font-size: 12px; color: var(--text-sub); margin-top:4px;">Nền tảng vận hành Bot Discord Node.js & Python 24/7</div>
+          </div>
           <form action="/stop-all" method="POST" style="margin:0;">
             <button class="btn btn-danger"><i class="fa-solid fa-power-off"></i> Tắt Tất Cả Bot</button>
           </form>
         </div>
 
-        <!-- Trạng Thái Các Bot Đang Chạy -->
-        <div class="card">
-          <h3 style="margin-top:0;"><i class="fa-solid fa-robot"></i> Trạng Thái Bot (${botList.length})</h3>
-          <div class="bot-grid">
-            ${botList.length === 0 ? '<div style="color: #6b7280; font-size: 13px;">Chưa có bot nào đang chạy.</div>' : ''}
-            ${botList.map(b => `
-              <div class="bot-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                  <strong>${b.name}</strong>
-                  <span class="badge ${b.status === 'ONLINE' ? 'badge-online' : 'badge-offline'}">${b.status}</span>
-                </div>
-                <div style="font-size:11px; color:#9ca3af; margin-top:5px;">Khởi chạy lúc: ${b.startTime}</div>
-              </div>
-            `).join('')}
+        <!-- Metric Cards -->
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-icon"><i class="fa-solid fa-microchip"></i></div>
+            <div>
+              <div style="font-size:12px; color:var(--text-sub);">RAM Máy Chủ</div>
+              <div style="font-size:16px; font-weight:700;">${freeMem} MB / ${totalMem} MB</div>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon"><i class="fa-solid fa-robot"></i></div>
+            <div>
+              <div style="font-size:12px; color:var(--text-sub);">Bot Đang Chạy</div>
+              <div style="font-size:16px; font-weight:700; color: var(--success);">${botList.length} Tiến Trình Online</div>
+            </div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-icon"><i class="fa-solid fa-shield-halved"></i></div>
+            <div>
+              <div style="font-size:12px; color:var(--text-sub);">Trạng Thái Hệ Thống</div>
+              <div style="font-size:16px; font-weight:700; color: var(--primary);">Khởi Chạy 24/7</div>
+            </div>
           </div>
         </div>
 
-        <!-- Trình Soạn Thảo Code IDE -->
+        <!-- Trình Soạn Thảo IDE -->
         <div class="card">
-          <h3 style="margin-top:0;"><i class="fa-solid fa-code"></i> Trình Soạn Thảo & Khởi Chạy Code IDE</h3>
-          <form action="/save-and-run" method="POST">
-            <div style="display:flex; gap:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+            <h3 style="margin:0;"><i class="fa-solid fa-code"></i> Trình Soạn Thảo Code IDE</h3>
+            <span style="font-size:12px; color:var(--text-sub);"><i class="fa-keyboard fa-regular"></i> Nhấn <b>Ctrl + S</b> để lưu nhanh</span>
+          </div>
+
+          <form action="/save-and-run" method="POST" id="codeForm">
+            <div style="display:flex; gap:12px; margin-bottom: 12px;">
               <div style="flex:1;">
-                <label style="font-size:12px; font-weight:bold;">Tên File Code Chạy Chính:</label>
+                <label style="font-size:12px; color:var(--text-sub); font-weight:bold;">Tên File Chạy Chính:</label>
                 <input type="text" name="fileName" id="currentFileName" value="main.py" required />
               </div>
               <div style="flex:1;">
-                <label style="font-size:12px; font-weight:bold;">Ngôn Ngữ Lập Trình:</label>
+                <label style="font-size:12px; color:var(--text-sub); font-weight:bold;">Ngôn Ngữ Lập Trình:</label>
                 <select name="language" id="langSelect" required>
-                  <option value="python">Python (.py)</option>
+                  <option value="python">Python 3 (.py)</option>
                   <option value="nodejs">Node.js (.js)</option>
                 </select>
               </div>
             </div>
 
-            <label style="font-size:12px; font-weight:bold;">Mã Nguồn File (Sửa / Viết Code Trực Tiếp Tại Đây):</label>
             <textarea name="codeContent" id="codeEditor"></textarea>
 
-            <button type="submit" class="btn" style="width:100%; margin-top:10px;"><i class="fa-solid fa-play"></i> Lưu File & Chạy Bot Ngay</button>
+            <button type="submit" class="btn" style="width:100%; margin-top:12px;"><i class="fa-solid fa-play"></i> Lưu Mã Nguồn & Kích Hoạt Bot Ngay</button>
           </form>
         </div>
 
         <!-- Terminal Logs -->
         <div class="card">
-          <h3 style="margin-top:0;"><i class="fa-solid fa-terminal"></i> Console Logs (Thời Gian Thực)</h3>
-          <div class="console">
+          <h3 style="margin-top:0; margin-bottom: 12px;"><i class="fa-solid fa-terminal"></i> Terminal Live Console Logs</h3>
+          <div class="terminal">
             ${systemLogs.map(l => `<div>${l}</div>`).join('') || '<div>Hệ thống sẵn sàng...</div>'}
           </div>
         </div>
       </div>
 
       <script>
-        const pyDefault = \`import discord\\n\\nintents = discord.Intents.default()\\nintents.message_content = True\\nclient = discord.Client(intents=intents)\\n\\n@client.event\\nasync def on_ready():\\n    print(f'Bot Python đã kết nối thành công: {client.user}')\\n\\n@client.event\\nasync def on_message(message):\\n    if message.author == client.user:\\n        return\\n    if message.content == '!ping':\\n        await message.channel.send('Pong! 🚀')\\n\\nclient.run('DÁN_TOKEN_BOT_VÀO_ĐÂY')\`;
+        const pyDefault = \`import discord\\n\\nintents = discord.Intents.default()\\nintents.message_content = True\\nclient = discord.Client(intents=intents)\\n\\n@client.event\\nasync def on_ready():\\n    print(f'✅ Bot Python đã ONLINE 100%: {client.user}')\\n\\n@client.event\\nasync def on_message(message):\\n    if message.author == client.user:\\n        return\\n    if message.content == '!ping':\\n        await message.channel.send('Pong! Bot online 24/7 🚀')\\n\\nclient.run('DÁN_TOKEN_BOT_VÀO_ĐÂY')\`;
 
         document.getElementById('codeEditor').value = pyDefault;
 
-        // Hàm mở và xem nội dung tệp khi click ở Sidebar
+        // Bắt phím tắt Ctrl + S để lưu
+        document.addEventListener('keydown', (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+            e.preventDefault();
+            document.getElementById('codeForm').submit();
+          }
+        });
+
         function openFile(fileName) {
           fetch('/api/file-content?name=' + encodeURIComponent(fileName))
             .then(res => res.json())
@@ -262,19 +316,29 @@ app.get('/', (req, res) => {
               }
             });
         }
+
+        function deleteFile(event, fileName) {
+          event.stopPropagation();
+          if (confirm('Bạn có chắc chắn muốn xóa file ' + fileName + '?')) {
+            fetch('/api/delete-file', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileName })
+            }).then(() => window.location.reload());
+          }
+        }
       </script>
     </body>
     </html>
   `);
 });
 
-// Route Upload nhiều file
-app.post('/upload-files', upload.array('botFiles', 20), (req, res) => {
-  logMessage(`📁 Đã upload thành công ${req.files ? req.files.length : 0} tệp vào dự án.`);
+// Routes Upload & Save
+app.post('/upload-files', upload.array('botFiles', 30), (req, res) => {
+  logMessage(`📁 [System] Đã tải lên ${req.files ? req.files.length : 0} tệp dự án.`);
   res.redirect('/');
 });
 
-// Route Lưu File & Chạy Bot
 app.post('/save-and-run', (req, res) => {
   const { fileName, language, codeContent } = req.body;
   if (!fileName || !codeContent) return res.redirect('/');
@@ -286,7 +350,6 @@ app.post('/save-and-run', (req, res) => {
   res.redirect('/');
 });
 
-// Route Tắt Tất Cả Bot
 app.post('/stop-all', (req, res) => {
   Object.values(activeBots).forEach(b => {
     if (b.process) {
@@ -299,4 +362,4 @@ app.post('/stop-all', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Kaito Hosting đang lắng nghe tại cổng ${PORT}`));
+app.listen(PORT, () => console.log(`Kaito Cloud Server Online tại cổng ${PORT}`));
